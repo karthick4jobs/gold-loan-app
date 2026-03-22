@@ -3,19 +3,46 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { motion } from "framer-motion";
-import { Trash2, Download } from "lucide-react";
+import { Trash2, Download, Plus } from "lucide-react";
 import * as XLSX from "xlsx";
 
 export default function GoldLoanCalculator() {
   const dateInputRef = useRef(null);
+  const getCurrentDate = () => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const [principal, setPrincipal] = useState("");
-  const [pledgeDate, setPledgeDate] = useState("");
-  const [interestRateFirst12] = useState(1.25); // First 12 months
-  const [interestRateAfter12] = useState(2); // After 12 months
+  const [pledgeDate, setPledgeDate] = useState(getCurrentDate());
+  const [currentDate, setCurrentDate] = useState(getCurrentDate());
+  const [isAyyaPeru, setIsAyyaPeru] = useState(true);
+  const interestRateFirst12 = 1.25; // First 12 months
+  const interestRateAfter12 = isAyyaPeru ? 1.75 : 2; // After 12 months
   const [months, setMonths] = useState(0);
   const [interest, setInterest] = useState(null);
   const [total, setTotal] = useState(null);
   const [history, setHistory] = useState([]);
+  const [partPayments, setPartPayments] = useState([]);
+  const [partAmount, setPartAmount] = useState("");
+  const [partDate, setPartDate] = useState(getCurrentDate());
+
+  const addPartPayment = () => {
+    if (!partAmount || !partDate) return;
+    setPartPayments(prev => [...prev, {
+      id: Date.now(),
+      date: partDate,
+      amount: parseFloat(partAmount)
+    }]);
+    setPartAmount("");
+  };
+
+  const removePartPayment = (id) => {
+    setPartPayments(prev => prev.filter(p => p.id !== id));
+  };
 
   // Accurate month calculation
   const calculateMonths = (start, end) => {
@@ -23,18 +50,33 @@ export default function GoldLoanCalculator() {
     let months = end.getMonth() - start.getMonth();
     let totalMonths = years * 12 + months;
     let daysDiff = end.getDate() - start.getDate();
+    console.log("daysDiff", daysDiff);
 
     if (daysDiff < 0) {
       totalMonths -= 1;
+      console.log("totalMonths", totalMonths);
       const prevMonth = new Date(end.getFullYear(), end.getMonth(), 0);
-      daysDiff += prevMonth.getDate();
+      console.log("prevMonth", prevMonth);
+      console.log("prevMonth", prevMonth.getMonth());
+      if (prevMonth.getMonth() == 1) {
+        daysDiff += 30; //for Feburuary month consider it as 30 days
+      } else {
+        daysDiff += prevMonth.getDate();
+      }
+      console.log("daysDiff", daysDiff);
     }
 
     let fractional = 0;
-    if (daysDiff >= 0 && daysDiff <= 7) fractional = 0.25;
-    else if (daysDiff >= 8 && daysDiff <= 14) fractional = 0.5;
-    else if (daysDiff >= 15 && daysDiff <= 21) fractional = 0.75;
-    else if (daysDiff > 21) fractional = 1;
+    if (daysDiff >= 1 && daysDiff <= 7) fractional = 0.25;
+    else if (daysDiff >= 8 && daysDiff <= 15) fractional = 0.5;
+    else if (isAyyaPeru) {
+      if (daysDiff >= 16 && daysDiff <= 21) fractional = 0.75;
+      else if (daysDiff >= 22) fractional = 1;
+    } else {
+      if (daysDiff >= 16 && daysDiff <= 22) fractional = 0.75;
+      else if (daysDiff >= 23) fractional = 1;
+    }
+    console.log("fractional", fractional);
 
     let total = totalMonths + fractional;
     return total < 0 ? 0 : total;
@@ -42,27 +84,84 @@ export default function GoldLoanCalculator() {
 
   const calculateLoan = () => {
     const p = parseFloat(principal);
-    if (!p || !pledgeDate) return;
+    if (!p || !pledgeDate || !currentDate) return;
     const startDate = new Date(pledgeDate);
-    const today = new Date();
+    const today = new Date(currentDate);
+    const finalMonthsTotal = calculateMonths(startDate, today);
 
-    const totalMonths = calculateMonths(startDate, today);
-    setMonths(totalMonths);
+    // Iterative calculation with part payments
+    let currentPrincipal = p;
+    let totalMonthsProcessed = 0;
+    let accumulatedInterest = 0;
 
-    let interestAmount = 0;
-    if (totalMonths <= 12) {
-      interestAmount = (p * interestRateFirst12 * totalMonths) / 100;
-    } else {
-      const first12 = (p * interestRateFirst12 * 12) / 100;
-      const remaining = totalMonths - 12;
-      const after12 = (p * interestRateAfter12 * remaining) / 100;
-      interestAmount = first12 + after12;
+    // Helper to calculate interest for a specific period since pledge
+    const getInterestForPeriod = (principal, startMonths, endMonths) => {
+      let interest = 0;
+      if (startMonths < 12) {
+        let firstSegment = Math.min(12, endMonths) - startMonths;
+        if (firstSegment > 0) {
+          interest += (principal * interestRateFirst12 * firstSegment) / 100;
+        }
+      }
+      if (endMonths > 12) {
+        let secondSegment = endMonths - Math.max(12, startMonths);
+        if (secondSegment > 0) {
+          interest += (principal * interestRateAfter12 * secondSegment) / 100;
+        }
+      }
+      return interest;
+    };
+
+    // Sort part payments chronologically
+    const sortedPayments = [...partPayments].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    for (let pay of sortedPayments) {
+      const payDate = new Date(pay.date);
+      console.log("payDate", payDate);
+      const monthsSincePledge = calculateMonths(startDate, payDate);
+      console.log("monthsSincePledge", monthsSincePledge);
+
+      // Determine effective months: 
+      // If payment falls on the last month of the total loan, use fractions (0.25, 0.5, 0.75)
+      // Otherwise, round up to the next full month as per previous rule
+      let effectiveMonths;
+      if (Math.floor(monthsSincePledge) === Math.floor(finalMonthsTotal)) {
+        effectiveMonths = monthsSincePledge;
+      } else {
+        effectiveMonths = Math.ceil(monthsSincePledge);
+      }
+      console.log("effectiveMonths", effectiveMonths);
+      const deltaMonths = effectiveMonths - totalMonthsProcessed;
+      console.log("deltaMonths", deltaMonths);
+      if (deltaMonths > 0) {
+        accumulatedInterest += getInterestForPeriod(currentPrincipal, totalMonthsProcessed, effectiveMonths);
+      }
+      console.log("accumulatedInterest", accumulatedInterest);
+      // Apply payment: reduce interest first, then principal
+      if (pay.amount >= accumulatedInterest) {
+        const remainingPayment = pay.amount - accumulatedInterest;
+        currentPrincipal -= remainingPayment;
+        accumulatedInterest = 0;
+      } else {
+        accumulatedInterest -= pay.amount;
+      }
+      totalMonthsProcessed = effectiveMonths;
     }
 
-    interestAmount = Math.round(interestAmount / 5) * 5;
+    // Calculate interest for the final period (from last payment to current date)
+    const finalDeltaMonths = finalMonthsTotal - totalMonthsProcessed;
+    if (finalDeltaMonths > 0) {
+      accumulatedInterest += getInterestForPeriod(currentPrincipal, totalMonthsProcessed, finalMonthsTotal);
+    }
 
-    setInterest(interestAmount.toFixed(2));
-    setTotal((p + interestAmount).toFixed(2));
+    // Final calculations
+    let finalInterestAmount = Math.ceil(accumulatedInterest / 5) * 5;
+    const additionalAmount = Math.floor(finalMonthsTotal / 12) * 50;
+    const finalTotal = currentPrincipal + finalInterestAmount + additionalAmount;
+
+    setMonths(finalMonthsTotal);
+    setInterest(finalInterestAmount.toFixed(2));
+    setTotal(finalTotal.toFixed(2));
 
     const formattedDate = `${String(startDate.getDate()).padStart(2, "0")}-${String(startDate.getMonth() + 1).padStart(2, "0")}-${String(startDate.getFullYear()).slice(-2)}`;
 
@@ -70,14 +169,17 @@ export default function GoldLoanCalculator() {
       id: Date.now(),
       principal: p,
       pledgeDate: formattedDate,
-      months: totalMonths,
-      interest: interestAmount.toFixed(2),
-      total: (p + interestAmount).toFixed(2)
+      months: finalMonthsTotal,
+      interest: finalInterestAmount.toFixed(2),
+      additional: additionalAmount,
+      partPayment: partPayments.reduce((sum, pay) => sum + pay.amount, 0),
+      total: finalTotal.toFixed(2)
     }, ...prev]);
 
     setPrincipal("");
-    setPledgeDate("");
+    setPledgeDate(currentDate);
     setInterest(null);
+    setPartPayments([]);
     setTimeout(() => dateInputRef.current?.focus(), 0);
   };
 
@@ -90,10 +192,46 @@ export default function GoldLoanCalculator() {
       if (record.id === id) {
         const val = parseFloat(newInterest);
         const floatInterest = isNaN(val) ? 0 : val;
+        const additionalAmount = parseFloat(record.additional) || 0;
+        const partPaymentAmount = parseFloat(record.partPayment) || 0;
         return {
           ...record,
           interest: newInterest,
-          total: (parseFloat(record.principal) + floatInterest).toFixed(2)
+          total: (parseFloat(record.principal) + floatInterest + additionalAmount - partPaymentAmount).toFixed(2)
+        };
+      }
+      return record;
+    }));
+  };
+
+  const updateAdditional = (id, newAdditional) => {
+    setHistory(prev => prev.map(record => {
+      if (record.id === id) {
+        const val = parseFloat(newAdditional);
+        const floatAdditional = isNaN(val) ? 0 : val;
+        const interestAmount = parseFloat(record.interest) || 0;
+        const partPaymentAmount = parseFloat(record.partPayment) || 0;
+        return {
+          ...record,
+          additional: newAdditional,
+          total: (parseFloat(record.principal) + interestAmount + floatAdditional - partPaymentAmount).toFixed(2)
+        };
+      }
+      return record;
+    }));
+  };
+
+  const updatePartPayment = (id, newPartPayment) => {
+    setHistory(prev => prev.map(record => {
+      if (record.id === id) {
+        const val = parseFloat(newPartPayment);
+        const floatPartPayment = isNaN(val) ? 0 : val;
+        const interestAmount = parseFloat(record.interest) || 0;
+        const additionalAmount = parseFloat(record.additional) || 0;
+        return {
+          ...record,
+          partPayment: newPartPayment,
+          total: (parseFloat(record.principal) + interestAmount + additionalAmount - floatPartPayment).toFixed(2)
         };
       }
       return record;
@@ -101,7 +239,7 @@ export default function GoldLoanCalculator() {
   };
 
   const exportToExcel = () => {
-    const today = new Date();
+    const today = new Date(currentDate);
     const formattedTitleDate = `${String(today.getDate()).padStart(2, "0")}-${String(today.getMonth() + 1).padStart(2, "0")}-${today.getFullYear()}`;
     const fileName = `Gold_Loan_History_${formattedTitleDate}.xlsx`;
 
@@ -111,46 +249,149 @@ export default function GoldLoanCalculator() {
       "Principal (₹)": parseFloat(record.principal),
       "Months": record.months,
       "Interest (₹)": parseFloat(record.interest),
+      "Additional (₹)": record.additional,
+      "Part Payment (₹)": record.partPayment,
       "Total Payable (₹)": parseFloat(record.total)
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(worksheetData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "History");
-    
+
     XLSX.writeFile(workbook, fileName);
   };
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-start bg-gray-50 p-6 pt-10 gap-8">
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md">
-        <Card className="rounded-2xl shadow-lg p-4 bg-white">
-          <CardContent>
-            <h1 className="text-2xl font-bold mb-4 text-center">Gold Loan Calculator</h1>
-            <label className="block mb-1 text-sm font-medium">Date of Pledge</label>
-            <Input
-              type="date"
-              value={pledgeDate}
-              onChange={(e) => setPledgeDate(e.target.value)}
-              className="p-2 mb-4 w-full"
-              ref={dateInputRef}
-            />
+      <div className="flex flex-col lg:flex-row gap-8 items-start justify-center w-full max-w-6xl">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md">
+          <Card className="rounded-2xl shadow-lg p-4 bg-white">
+            <CardContent>
+              <div className="flex justify-between items-center mb-4">
+                <h1 className="text-xl font-bold">Gold Loan Calculator</h1>
+                <Button
+                  onClick={() => setIsAyyaPeru(!isAyyaPeru)}
+                  className={`h-9 px-3 text-xs font-semibold rounded-full shadow-sm transition-all duration-300 transform active:scale-95 ${isAyyaPeru
+                    ? "bg-gradient-to-r from-orange-400 to-red-500 text-white hover:from-orange-500 hover:to-red-600"
+                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                    }`}
+                >
+                  AyyaPeru: {isAyyaPeru ? "Enabled" : "Disabled"}
+                </Button>
+              </div>
+              <label className="block mb-1 text-sm font-medium">Current Date</label>
+              <Input
+                type="date"
+                value={currentDate}
+                onChange={(e) => setCurrentDate(e.target.value)}
+                className="p-2 mb-4 w-full"
+              />
 
-            <label className="block mb-1 text-sm font-medium">Principal Amount</label>
-            <Input
-              type="number"
-              placeholder="Enter principal amount"
-              value={principal}
-              onChange={(e) => setPrincipal(e.target.value)}
-              className="p-2 mb-4 w-full"
-            />
+              <label className="block mb-1 text-sm font-medium">Date of Pledge</label>
+              <Input
+                type="date"
+                value={pledgeDate}
+                onChange={(e) => setPledgeDate(e.target.value)}
+                className="p-2 mb-4 w-full"
+                ref={dateInputRef}
+              />
 
-            <Button onClick={calculateLoan} className="w-full p-2 rounded-xl text-white bg-blue-600 hover:bg-blue-700">
-              Calculate
-            </Button>
-          </CardContent>
-        </Card>
-      </motion.div>
+              <label className="block mb-1 text-sm font-medium">Principal Amount</label>
+              <Input
+                type="number"
+                placeholder="Enter principal amount"
+                value={principal}
+                onChange={(e) => setPrincipal(e.target.value)}
+                className="p-2 mb-4 w-full"
+              />
+
+              <Button onClick={calculateLoan} className="w-full p-2 rounded-xl text-white bg-blue-600 hover:bg-blue-700">
+                Calculate
+              </Button>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="w-full max-w-md">
+          <Card className="rounded-2xl shadow-lg p-4 bg-white min-h-[400px]">
+            <CardContent>
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  Part Payments
+                </h2>
+                {partPayments.length > 0 && (
+                  <Button
+                    onClick={() => setPartPayments([])}
+                    variant="ghost"
+                    className="text-xs h-7 px-2 text-red-500 hover:text-red-700 hover:bg-red-50"
+                  >
+                    Clear All
+                  </Button>
+                )}
+              </div>
+
+              <div className="space-y-4 mb-6 p-4 bg-blue-50 rounded-xl">
+                <div>
+                  <label className="block mb-1 text-xs font-medium text-gray-600">Payment Date</label>
+                  <Input
+                    type="date"
+                    value={partDate}
+                    onChange={(e) => setPartDate(e.target.value)}
+                    className="h-9"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-xs font-medium text-gray-600">Amount (₹)</label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="number"
+                      placeholder="Amount"
+                      value={partAmount}
+                      onChange={(e) => setPartAmount(e.target.value)}
+                      className="h-9"
+                    />
+                    <Button onClick={addPartPayment} className="h-9 w-9 p-0 bg-blue-600 hover:bg-blue-700">
+                      <Plus size={18} />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {partPayments.length === 0 ? (
+                  <p className="text-sm text-gray-400 text-center py-8">No part payments added</p>
+                ) : (
+                  partPayments.map((p) => (
+                    <div key={p.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border border-gray-100 group transition-all hover:border-blue-200">
+                      <div>
+                        <p className="text-xs text-gray-500">{p.date}</p>
+                        <p className="font-bold text-gray-800">₹{p.amount.toLocaleString()}</p>
+                      </div>
+                      <Button
+                        onClick={() => removePartPayment(p.id)}
+                        className="h-8 w-8 p-0 bg-transparent text-gray-400 hover:text-red-500 hover:bg-red-50 shadow-none opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <Trash2 size={16} />
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {partPayments.length > 0 && (
+                <div className="mt-6 pt-4 border-t border-dashed">
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-gray-600">Total Part Payment:</span>
+                    <span className="font-bold text-blue-600">
+                      ₹{partPayments.reduce((sum, p) => sum + p.amount, 0).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+      </div>
 
       {history.length > 0 && (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-4xl">
@@ -170,6 +411,8 @@ export default function GoldLoanCalculator() {
                     <th className="p-2 font-medium">Principal (₹)</th>
                     <th className="p-2 font-medium">Months</th>
                     <th className="p-2 font-medium">Interest (₹)</th>
+                    <th className="p-2 font-medium">Additional (₹)</th>
+                    <th className="p-2 font-medium">Part Payment (₹)</th>
                     <th className="p-2 font-medium">Total Payable (₹)</th>
                     <th className="p-2 font-medium text-center">Action</th>
                   </tr>
@@ -182,17 +425,33 @@ export default function GoldLoanCalculator() {
                       <td className="p-2">{record.principal}</td>
                       <td className="p-2">{record.months}</td>
                       <td className="p-2">
-                        <Input 
+                        <Input
                           type="number"
                           value={record.interest}
                           onChange={(e) => updateInterest(record.id, e.target.value)}
                           className="w-24 h-8 px-2 py-1 text-sm bg-white"
                         />
                       </td>
+                      <td className="p-2">
+                        <Input
+                          type="number"
+                          value={record.additional}
+                          onChange={(e) => updateAdditional(record.id, e.target.value)}
+                          className="w-24 h-8 px-2 py-1 text-sm bg-white"
+                        />
+                      </td>
+                      <td className="p-2">
+                        <Input
+                          type="number"
+                          value={record.partPayment}
+                          onChange={(e) => updatePartPayment(record.id, e.target.value)}
+                          className="w-24 h-8 px-2 py-1 text-sm bg-white text-red-600 font-medium"
+                        />
+                      </td>
                       <td className="p-2 font-bold">{record.total}</td>
                       <td className="p-2 text-center flex justify-center items-center">
-                        <Button 
-                          onClick={() => deleteRecord(record.id)} 
+                        <Button
+                          onClick={() => deleteRecord(record.id)}
                           className="h-8 w-8 p-0 bg-transparent text-red-500 hover:text-red-700 hover:bg-red-50 focus-visible:ring-red-500 shadow-none"
                         >
                           <Trash2 size={18} />
@@ -201,6 +460,30 @@ export default function GoldLoanCalculator() {
                     </tr>
                   ))}
                 </tbody>
+                {history.length > 0 && (
+                  <tfoot className="border-t-2 border-gray-200">
+                    <tr className="bg-gray-50 font-bold text-gray-800">
+                      <td colSpan={2} className="p-2 text-right">Grand Totals:</td>
+                      <td className="p-2">
+                        ₹{history.reduce((sum, r) => sum + (parseFloat(r.principal) || 0), 0).toLocaleString()}
+                      </td>
+                      <td className="p-2">-</td>
+                      <td className="p-2">
+                        ₹{history.reduce((sum, r) => sum + (parseFloat(r.interest) || 0), 0).toFixed(2)}
+                      </td>
+                      <td className="p-2">
+                        ₹{history.reduce((sum, r) => sum + (parseFloat(r.additional) || 0), 0).toFixed(2)}
+                      </td>
+                      <td className="p-2 text-red-600">
+                        ₹{history.reduce((sum, r) => sum + (parseFloat(r.partPayment) || 0), 0).toFixed(2)}
+                      </td>
+                      <td className="p-2 text-blue-600">
+                        ₹{history.reduce((sum, r) => sum + (parseFloat(r.total) || 0), 0).toFixed(2)}
+                      </td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </CardContent>
           </Card>
