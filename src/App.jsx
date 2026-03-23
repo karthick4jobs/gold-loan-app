@@ -157,7 +157,7 @@ export default function GoldLoanCalculator() {
     // Final calculations
     let finalInterestAmount = Math.ceil(accumulatedInterest / 5) * 5;
     const additionalAmount = Math.floor(finalMonthsTotal / 12) * 50;
-    const finalTotal = currentPrincipal + finalInterestAmount + additionalAmount;
+    const finalTotal = Math.ceil((currentPrincipal + finalInterestAmount + additionalAmount) / 5) * 5;
 
     setMonths(finalMonthsTotal);
     setInterest(finalInterestAmount.toFixed(2));
@@ -197,7 +197,7 @@ export default function GoldLoanCalculator() {
         return {
           ...record,
           interest: newInterest,
-          total: (parseFloat(record.principal) + floatInterest + additionalAmount - partPaymentAmount).toFixed(2)
+          total: (Math.ceil((parseFloat(record.principal) + floatInterest + additionalAmount - partPaymentAmount) / 5) * 5).toFixed(2)
         };
       }
       return record;
@@ -214,7 +214,7 @@ export default function GoldLoanCalculator() {
         return {
           ...record,
           additional: newAdditional,
-          total: (parseFloat(record.principal) + interestAmount + floatAdditional - partPaymentAmount).toFixed(2)
+          total: (Math.ceil((parseFloat(record.principal) + interestAmount + floatAdditional - partPaymentAmount) / 5) * 5).toFixed(2)
         };
       }
       return record;
@@ -231,7 +231,7 @@ export default function GoldLoanCalculator() {
         return {
           ...record,
           partPayment: newPartPayment,
-          total: (parseFloat(record.principal) + interestAmount + additionalAmount - floatPartPayment).toFixed(2)
+          total: (Math.ceil((parseFloat(record.principal) + interestAmount + additionalAmount - floatPartPayment) / 5) * 5).toFixed(2)
         };
       }
       return record;
@@ -243,8 +243,8 @@ export default function GoldLoanCalculator() {
     const formattedTitleDate = `${String(today.getDate()).padStart(2, "0")}-${String(today.getMonth() + 1).padStart(2, "0")}-${today.getFullYear()}`;
     const fileName = `Gold_Loan_History_${formattedTitleDate}.xlsx`;
 
-    const worksheetData = history.map((record, index) => ({
-      "S.No.": history.length - index,
+    const worksheetData = [...history].reverse().map((record, index) => ({
+      "S.No.": index + 1,
       "Date Pledged": record.pledgeDate,
       "Principal (₹)": parseFloat(record.principal),
       "Months": record.months,
