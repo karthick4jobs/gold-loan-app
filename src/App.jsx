@@ -155,13 +155,18 @@ export default function GoldLoanCalculator() {
     }
 
     // Final calculations
-    let finalInterestAmount = Math.ceil(accumulatedInterest / 5) * 5;
+    const partPaymentTotal = partPayments.reduce((sum, pay) => sum + pay.amount, 0);
     const additionalAmount = Math.floor(finalMonthsTotal / 12) * 50;
-    const finalTotal = Math.ceil((currentPrincipal + finalInterestAmount + additionalAmount) / 5) * 5;
+    
+    // The final total is (remaining principal + remaining interest + additional), rounded up to the nearest 5.
+    const finalTotalValue = Math.ceil((currentPrincipal + accumulatedInterest + additionalAmount) / 5) * 5;
+    
+    // To ensure consistency (Principal + Interest + Additional - PartPayment = Total) in the history table:
+    const displayedInterest = finalTotalValue - p - additionalAmount + partPaymentTotal;
 
     setMonths(finalMonthsTotal);
-    setInterest(finalInterestAmount.toFixed(2));
-    setTotal(finalTotal.toFixed(2));
+    setInterest(displayedInterest.toFixed(2));
+    setTotal(finalTotalValue.toFixed(2));
 
     const formattedDate = `${String(startDate.getDate()).padStart(2, "0")}-${String(startDate.getMonth() + 1).padStart(2, "0")}-${String(startDate.getFullYear()).slice(-2)}`;
 
@@ -170,10 +175,10 @@ export default function GoldLoanCalculator() {
       principal: p,
       pledgeDate: formattedDate,
       months: finalMonthsTotal,
-      interest: finalInterestAmount.toFixed(2),
+      interest: displayedInterest.toFixed(2),
       additional: additionalAmount,
-      partPayment: partPayments.reduce((sum, pay) => sum + pay.amount, 0),
-      total: finalTotal.toFixed(2)
+      partPayment: partPaymentTotal,
+      total: finalTotalValue.toFixed(2)
     }, ...prev]);
 
     setPrincipal("");
