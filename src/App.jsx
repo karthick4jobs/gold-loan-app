@@ -2,8 +2,8 @@ import React, { useState, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { motion } from "framer-motion";
-import { Trash2, Download, Plus } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Trash2, Download, Plus, ChevronDown, ChevronUp } from "lucide-react";
 import * as XLSX from "xlsx";
 
 export default function GoldLoanCalculator() {
@@ -29,6 +29,18 @@ export default function GoldLoanCalculator() {
   const [partPayments, setPartPayments] = useState([]);
   const [partAmount, setPartAmount] = useState("");
   const [partDate, setPartDate] = useState(getCurrentDate());
+  const denominations = [500, 200, 100, 50, 20, 10, 1];
+  const [counts, setCounts] = useState({
+    500: "",
+    200: "",
+    100: "",
+    50: "",
+    20: "",
+    10: "",
+    1: ""
+  });
+  const [isPartPaymentOpen, setIsPartPaymentOpen] = useState(false);
+  const [isCashCounterOpen, setIsCashCounterOpen] = useState(false);
 
   const addPartPayment = () => {
     if (!partAmount || !partDate) return;
@@ -157,10 +169,10 @@ export default function GoldLoanCalculator() {
     // Final calculations
     const partPaymentTotal = partPayments.reduce((sum, pay) => sum + pay.amount, 0);
     const additionalAmount = Math.floor(finalMonthsTotal / 12) * 50;
-    
+
     // The final total is (remaining principal + remaining interest + additional), rounded up to the nearest 5.
     const finalTotalValue = Math.ceil((currentPrincipal + accumulatedInterest + additionalAmount) / 5) * 5;
-    
+
     // To ensure consistency (Principal + Interest + Additional - PartPayment = Total) in the history table:
     const displayedInterest = finalTotalValue - p - additionalAmount + partPaymentTotal;
 
@@ -246,29 +258,65 @@ export default function GoldLoanCalculator() {
   const exportToExcel = () => {
     const today = new Date(currentDate);
     const formattedTitleDate = `${String(today.getDate()).padStart(2, "0")}-${String(today.getMonth() + 1).padStart(2, "0")}-${today.getFullYear()}`;
-    const fileName = `Gold_Loan_History_${formattedTitleDate}.xlsx`;
+    const fileName = `Gold_Loan_History_${formattedTitleDate}${isAyyaPeru ? "_ayya" : ""}.xlsx`;
 
-    const worksheetData = [...history].reverse().map((record, index) => ({
+    // 1. Prepare history data with totals
+    const historyData = [...history].reverse().map((record, index) => ({
       "S.No.": index + 1,
       "Date Pledged": record.pledgeDate,
       "Principal (₹)": parseFloat(record.principal),
       "Months": record.months,
       "Interest (₹)": parseFloat(record.interest),
-      "Additional (₹)": record.additional,
-      "Part Payment (₹)": record.partPayment,
+      "Additional (₹)": parseFloat(record.additional) || 0,
+      "Part Payment (₹)": parseFloat(record.partPayment) || 0,
       "Total Payable (₹)": parseFloat(record.total)
     }));
 
-    const worksheet = XLSX.utils.json_to_sheet(worksheetData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "History");
+    // Calculate totals
+    const totalPrincipal = history.reduce((sum, r) => sum + (parseFloat(r.principal) || 0), 0);
+    const totalInterest = history.reduce((sum, r) => sum + (parseFloat(r.interest) || 0), 0);
+    const totalAdditional = history.reduce((sum, r) => sum + (parseFloat(r.additional) || 0), 0);
+    const totalPartPayment = history.reduce((sum, r) => sum + (parseFloat(r.partPayment) || 0), 0);
+    const finalGrandTotal = history.reduce((sum, r) => sum + (parseFloat(r.total) || 0), 0);
 
+    const worksheet = XLSX.utils.json_to_sheet(historyData);
+
+    // 2. Add Grand Totals below the table
+    const grandTotals = [
+      [""], // Spacer
+      ["", "GRAND TOTALS", totalPrincipal, "", totalInterest, totalAdditional, totalPartPayment, finalGrandTotal]
+    ];
+    XLSX.utils.sheet_add_aoa(worksheet, grandTotals, { origin: -1 });
+
+    // 3. Add Cash Counter Details
+    const cashCounterRows = [
+      [""], // Spacer
+      [""], // Spacer
+      ["CASH COUNTER DETAILS"],
+      ["Denomination", "Count", "Subtotal"]
+    ];
+
+    denominations.forEach(denom => {
+      const count = parseInt(counts[denom]) || 0;
+      if (count > 0) {
+        cashCounterRows.push([`₹ ${denom}`, count, count * denom]);
+      }
+    });
+
+    const totalCashAmount = Object.entries(counts).reduce((sum, [denom, count]) => sum + ((parseInt(count) || 0) * parseInt(denom)), 0);
+    cashCounterRows.push(["TOTAL CASH", "", totalCashAmount]);
+
+    XLSX.utils.sheet_add_aoa(worksheet, cashCounterRows, { origin: -1 });
+
+    // 4. Create and save workbook
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Report");
     XLSX.writeFile(workbook, fileName);
   };
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-start bg-gray-50 p-6 pt-10 gap-8">
-      <div className="flex flex-col lg:flex-row gap-8 items-start justify-center w-full max-w-6xl">
+      <div className="flex flex-col lg:flex-row gap-8 items-start justify-center w-full max-w-7xl">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md">
           <Card className="rounded-2xl shadow-lg p-4 bg-white">
             <CardContent>
@@ -318,81 +366,171 @@ export default function GoldLoanCalculator() {
         </motion.div>
 
         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="w-full max-w-md">
-          <Card className="rounded-2xl shadow-lg p-4 bg-white min-h-[400px]">
+          <Card className="rounded-2xl shadow-lg p-4 bg-white">
             <CardContent>
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-bold flex items-center gap-2">
-                  Part Payments
-                </h2>
-                {partPayments.length > 0 && (
-                  <Button
-                    onClick={() => setPartPayments([])}
-                    variant="ghost"
-                    className="text-xs h-7 px-2 text-red-500 hover:text-red-700 hover:bg-red-50"
-                  >
-                    Clear All
-                  </Button>
-                )}
-              </div>
-
-              <div className="space-y-4 mb-6 p-4 bg-blue-50 rounded-xl">
-                <div>
-                  <label className="block mb-1 text-xs font-medium text-gray-600">Payment Date</label>
-                  <Input
-                    type="date"
-                    value={partDate}
-                    onChange={(e) => setPartDate(e.target.value)}
-                    className="h-9"
-                  />
+              <div 
+                className="flex justify-between items-center mb-4 cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-colors"
+                onClick={() => setIsPartPaymentOpen(!isPartPaymentOpen)}
+              >
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xl font-bold flex items-center gap-2">
+                    Part Payments
+                  </h2>
+                  {isPartPaymentOpen ? <ChevronUp size={20} className="text-gray-500" /> : <ChevronDown size={20} className="text-gray-500" />}
                 </div>
-                <div>
-                  <label className="block mb-1 text-xs font-medium text-gray-600">Amount (₹)</label>
-                  <div className="flex gap-2">
-                    <Input
-                      type="number"
-                      placeholder="Amount"
-                      value={partAmount}
-                      onChange={(e) => setPartAmount(e.target.value)}
-                      className="h-9"
-                    />
-                    <Button onClick={addPartPayment} className="h-9 w-9 p-0 bg-blue-600 hover:bg-blue-700">
-                      <Plus size={18} />
+                <div className="flex items-center gap-2">
+                  {partPayments.length > 0 && (
+                    <Button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPartPayments([]);
+                      }}
+                      variant="ghost"
+                      className="text-xs h-7 px-2 text-red-500 hover:text-red-700 hover:bg-red-50"
+                    >
+                      Clear All
                     </Button>
-                  </div>
+                  )}
                 </div>
               </div>
 
-              <div className="space-y-2">
-                {partPayments.length === 0 ? (
-                  <p className="text-sm text-gray-400 text-center py-8">No part payments added</p>
-                ) : (
-                  partPayments.map((p) => (
-                    <div key={p.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border border-gray-100 group transition-all hover:border-blue-200">
+              <AnimatePresence>
+                {isPartPaymentOpen && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="space-y-4 mb-6 p-4 bg-blue-50 rounded-xl">
                       <div>
-                        <p className="text-xs text-gray-500">{p.date}</p>
-                        <p className="font-bold text-gray-800">₹{p.amount.toLocaleString()}</p>
+                        <label className="block mb-1 text-xs font-medium text-gray-600">Payment Date</label>
+                        <Input
+                          type="date"
+                          value={partDate}
+                          onChange={(e) => setPartDate(e.target.value)}
+                          className="h-9"
+                        />
                       </div>
-                      <Button
-                        onClick={() => removePartPayment(p.id)}
-                        className="h-8 w-8 p-0 bg-transparent text-gray-400 hover:text-red-500 hover:bg-red-50 shadow-none opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <Trash2 size={16} />
-                      </Button>
+                      <div>
+                        <label className="block mb-1 text-xs font-medium text-gray-600">Amount (₹)</label>
+                        <div className="flex gap-2">
+                          <Input
+                            type="number"
+                            placeholder="Amount"
+                            value={partAmount}
+                            onChange={(e) => setPartAmount(e.target.value)}
+                            className="h-9"
+                          />
+                          <Button onClick={addPartPayment} className="h-9 w-9 p-0 bg-blue-600 hover:bg-blue-700">
+                            <Plus size={18} />
+                          </Button>
+                        </div>
+                      </div>
                     </div>
-                  ))
+
+                    <div className="space-y-2">
+                      {partPayments.length === 0 ? (
+                        <p className="text-sm text-gray-400 text-center py-8">No part payments added</p>
+                      ) : (
+                        partPayments.map((p) => (
+                          <div key={p.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border border-gray-100 group transition-all hover:border-blue-200">
+                            <div>
+                              <p className="text-xs text-gray-500">{p.date}</p>
+                              <p className="font-bold text-gray-800">₹{p.amount.toLocaleString()}</p>
+                            </div>
+                            <Button
+                              onClick={() => removePartPayment(p.id)}
+                              className="h-8 w-8 p-0 bg-transparent text-gray-400 hover:text-red-500 hover:bg-red-50 shadow-none opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <Trash2 size={16} />
+                            </Button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {partPayments.length > 0 && (
+                      <div className="mt-6 pt-4 border-t border-dashed">
+                        <div className="flex justify-between items-center text-sm">
+                          <span className="text-gray-600">Total Part Payment:</span>
+                          <span className="font-bold text-blue-600">
+                            ₹{partPayments.reduce((sum, p) => sum + p.amount, 0).toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </motion.div>
                 )}
+              </AnimatePresence>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="w-full max-w-sm">
+          <Card className="rounded-2xl shadow-lg p-4 bg-white">
+            <CardContent>
+              <div 
+                className="flex justify-between items-center mb-4 cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-colors"
+                onClick={() => setIsCashCounterOpen(!isCashCounterOpen)}
+              >
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xl font-bold flex items-center gap-2">
+                    Cash Counter
+                  </h2>
+                  {isCashCounterOpen ? <ChevronUp size={20} className="text-gray-500" /> : <ChevronDown size={20} className="text-gray-500" />}
+                </div>
+                <Button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCounts({ 500: "", 200: "", 100: "", 50: "", 20: "", 10: "", 1: "" });
+                  }}
+                  variant="ghost"
+                  className="text-xs h-7 px-2 text-red-500 hover:text-red-700 hover:bg-red-50"
+                >
+                  Clear
+                </Button>
               </div>
 
-              {partPayments.length > 0 && (
-                <div className="mt-6 pt-4 border-t border-dashed">
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-gray-600">Total Part Payment:</span>
-                    <span className="font-bold text-blue-600">
-                      ₹{partPayments.reduce((sum, p) => sum + p.amount, 0).toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-              )}
+              <AnimatePresence>
+                {isCashCounterOpen && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="space-y-3">
+                      {denominations.map((denom) => (
+                        <div key={denom} className="flex items-center gap-3">
+                          <span className="w-10 text-sm font-semibold text-gray-600 whitespace-nowrap">₹ {denom}</span>
+                          <span className="text-gray-300">×</span>
+                          <Input
+                            type="number"
+                            placeholder="0"
+                            value={counts[denom]}
+                            onChange={(e) => setCounts({ ...counts, [denom]: e.target.value })}
+                            className="w-20 h-9 text-center"
+                          />
+                          <span className="text-gray-300">=</span>
+                          <span className="flex-1 text-right font-bold text-gray-800">
+                            ₹{((parseInt(counts[denom]) || 0) * denom).toLocaleString()}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-6 pt-4 border-t border-dashed border-gray-200">
+                      <div className="flex justify-between items-center text-lg font-bold">
+                        <span className="text-gray-600">Total Cash:</span>
+                        <span className="text-green-600">
+                          ₹{Object.entries(counts).reduce((sum, [denom, count]) => sum + ((parseInt(count) || 0) * parseInt(denom)), 0).toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </CardContent>
           </Card>
         </motion.div>
